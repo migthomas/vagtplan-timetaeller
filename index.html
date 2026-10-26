@@ -167,6 +167,22 @@ footer { font-size: 13px; color: var(--muted); max-width: 70ch; }
     <p class="status" id="status" role="status" aria-live="polite"></p>
   </section>
 
+  <section class="panel export" aria-labelledby="h-ics">
+    <div>
+      <h2 id="h-ics">5. Hent kalenderfil</h2>
+      <p class="meta">Filen indeholder dine vagter for <b id="icsYear">2026</b>, fra og med datoen nedenfor. Vagter før den dato kommer ikke med, så vagter, der allerede er afviklet i din kalender, bliver ikke rørt. Åbn Google Kalender, vælg <b>Indstillinger → Importér og eksportér → Importér</b>, og vælg filen. Importér helst til en egen kalender, fx "Vagter".</p>
+      <div class="settings">
+        <label class="field" for="from">Vagter fra og med
+          <input id="from" type="date">
+        </label>
+        <button class="btn ghost" id="fromToday" type="button">Fra i dag</button>
+      </div>
+      <p class="meta">Retter planen sig senere, så vælg den første dag, der er ændret, og importér den nye fil til den samme kalender. Vagter på de samme dage bliver opdateret. Importen sletter aldrig noget, så en vagt, der er flyttet eller fjernet, skal du selv slette i kalenderen.</p>
+    </div>
+    <button class="btn" id="ics" type="button" disabled>Hent kalenderfil</button>
+    <p class="status" id="icsStatus" role="status" aria-live="polite"></p>
+  </section>
+
   <footer>Siden er et uofficielt hjælpeværktøj og henter ingenting fra internettet, når den først er åbnet. Upload aldrig vagtplaner eller timeark andre steder hen, da de indeholder kollegers navne og arbejdstider.<br>Normen regnes som 35 timer om ugen i gennemsnit (skifteholdsplan med dag, aften og nat, Industriens Overenskomst § 15 stk. 4.1): 7 timer pr. hverdag, minus søgnehelligdage på hverdage og ferie. Vagtlængderne er de samme som i timearket og kan rettes på fanen Vagttyper.<br>Siden virker uden internet. Den bruger pdf.js (Mozilla, Apache 2.0) og JSZip (MIT).</footer>
 </div>
 
@@ -415,6 +431,8 @@ function render() {
   w.hidden = !msgs.length;
   renderYear(year, r.hol);
   $('dl').disabled = false;
+  $('ics').disabled = example;
+  $('icsYear').textContent = year;
 }
 
 function renderYear(year, hol) {
@@ -491,10 +509,10 @@ async function readPdf(file) {
     plan = res;
     const fmtD = t => new Date(t).toLocaleDateString('da-DK', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
     $('planInfo').textContent = `${file.name} · ${doc.numPages} sider · ${fmtD(res.firstDate)} til ${fmtD(res.lastDate)} · ${res.names.length} navne`;
-    if (res.year) $('year').value = res.year;
+    if (res.year) { $('year').value = res.year; setFromDefault(); }
     const saved = store.get('vagtplan.navn');
     if (saved && res.names.some(n => n.label === saved)) choose(saved);
-    else { current = null; renderNames(); $('who').textContent = '…'; $('status').textContent = 'Vælg dit navn under punkt 2.'; $('status').className = 'status'; $('dl').disabled = true; }
+    else { current = null; renderNames(); $('who').textContent = '…'; $('status').textContent = 'Vælg dit navn under punkt 2.'; $('status').className = 'status'; $('dl').disabled = true; $('ics').disabled = true; }
   } catch (e) {
     console.error(e);
     $('planInfo').textContent = 'Kunne ikke læse filen: ' + (e && e.message ? e.message : e);
@@ -551,6 +569,92 @@ async function saveFile() {
   } finally { $('dl').disabled = false; }
 }
 
+
+// ---------- kalenderfil (.ics) ----------
+const SHIFTS = {
+  M:  ['06:00', '14:00', 0, 'Morgenvagt'],
+  E:  ['14:00', '22:00', 0, 'Eftermiddagsvagt'],
+  N:  ['22:00', '06:00', 1, 'Nattevagt'],
+  DL: ['07:00', '15:00', 0, 'Disponibel'],
+  DK: ['07:00', '14:00', 0, 'Disponibel'],
+  KL: ['07:00', '15:00', 0, 'Kursus/oplæring'],
+  KK: ['07:00', '14:00', 0, 'Kursus/oplæring'],
+};
+const icsEsc = t => String(t).replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+const icsFold = line => { const out = []; let rest = line; while (rest.length > 60) { out.push(rest.slice(0, 60)); rest = ' ' + rest.slice(60); } out.push(rest); return out; };
+const ymd = k => k.replace(/-/g, '');
+const dtLocal = (k, hm) => ymd(k) + 'T' + hm.replace(':', '') + '00';
+function buildIcs(person, year, from) {
+  const L = [];
+  const add = l => icsFold(l).forEach(x => L.push(x));
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+  const seq = Math.floor(Date.now() / 60000);
+  ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Vagtplan til timetaeller//DA', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:Vagter ' + year, 'X-WR-TIMEZONE:Europe/Copenhagen',
+   'BEGIN:VTIMEZONE', 'TZID:Europe/Copenhagen',
+   'BEGIN:DAYLIGHT', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200', 'TZNAME:CEST', 'DTSTART:19700329T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU', 'END:DAYLIGHT',
+   'BEGIN:STANDARD', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD',
+   'END:VTIMEZONE'].forEach(add);
+  let count = 0; const skipped = {};
+  for (let t = Date.UTC(year, 0, 1); new Date(t).getUTCFullYear() === year; t += DAY) {
+    const k = iso(t); if (k < from) continue;
+    const raw = (person.cells[k] || '').trim(); if (!raw) continue;
+    const u = raw.toUpperCase();
+    if (u === 'F') {
+      ['BEGIN:VEVENT', `UID:vagt-${ymd(k)}@vagtplan-timetaeller`, `DTSTAMP:${stamp}`, `SEQUENCE:${seq}`,
+       `DTSTART;VALUE=DATE:${ymd(k)}`, `DTEND;VALUE=DATE:${ymd(iso(t + DAY))}`, 'SUMMARY:Ferie', 'TRANSP:TRANSPARENT', 'END:VEVENT'].forEach(add);
+      count++; continue;
+    }
+    const sh = SHIFTS[u];
+    if (!sh) { skipped[u] = (skipped[u] || 0) + 1; continue; }
+    const endDay = sh[2] ? iso(t + DAY) : k;
+    ['BEGIN:VEVENT', `UID:vagt-${ymd(k)}@vagtplan-timetaeller`, `DTSTAMP:${stamp}`, `SEQUENCE:${seq}`,
+     `DTSTART;TZID=Europe/Copenhagen:${dtLocal(k, sh[0])}`, `DTEND;TZID=Europe/Copenhagen:${dtLocal(endDay, sh[1])}`,
+     `SUMMARY:${icsEsc(sh[3])}`, `DESCRIPTION:${icsEsc(`Kode: ${u} · ${fmt(TYPES[u])} timer`)}`, 'TRANSP:OPAQUE', 'END:VEVENT'].forEach(add);
+    count++;
+  }
+  add('END:VCALENDAR');
+  return { text: L.join('\r\n') + '\r\n', count, skipped };
+}
+async function saveIcs() {
+  const st = $('icsStatus'); st.className = 'status'; st.textContent = 'Laver filen …';
+  $('ics').disabled = true;
+  try {
+    const year = +$('year').value;
+    const from = $('from').value && $('from').value > `${year}-01-01` ? $('from').value : `${year}-01-01`;
+    const fromTxt = new Date(from + 'T00:00:00Z').toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+    const r = buildIcs(current, year, from);
+    if (!r.count) { st.textContent = `Der er ingen vagter fra og med ${fromTxt} at lave en kalenderfil af.`; st.className = 'status err'; return; }
+    const sk = Object.entries(r.skipped).map(([c, n]) => `${n} × ${c}`);
+    const note = sk.length ? ` Disse koder er ikke med i kalenderfilen: ${sk.join(', ')}.` : '';
+    const blob = new Blob([r.text], { type: 'text/calendar;charset=utf-8' });
+    window.__lastIcs = r.text;
+    const name = from === `${year}-01-01` ? `Vagter-${year}` : `Vagter-${year}-fra-${from.slice(5)}`;
+    if (downloads) {
+      try { await downloads.save({ filename: name + '.ics', data: blob }); st.textContent = `Filen er gemt med ${r.count} begivenheder fra og med ${fromTxt}.${note}`; st.className = 'status ok'; }
+      catch (e) {
+        if (e && (e.code === 'rejected_extension' || e.code === 'extension_not_enabled')) {
+          const z = new JSZip(); z.file(name + '.ics', r.text);
+          await downloads.save({ filename: name + '.zip', data: await z.generateAsync({ type: 'blob' }) });
+          st.textContent = `Zip-filen er gemt med ${r.count} begivenheder fra og med ${fromTxt}. Pak den ud, og importér .ics-filen.${note}`; st.className = 'status ok';
+        } else throw e;
+      }
+    } else {
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name + '.ics';
+      document.body.append(a); a.click(); a.remove();
+      st.textContent = `Filen er hentet med ${r.count} begivenheder fra og med ${fromTxt}.${note}`; st.className = 'status ok';
+    }
+  } catch (e) {
+    const code = e && e.code;
+    if (code === 'declined') st.textContent = 'Gemning annulleret.';
+    else { st.textContent = 'Filen kunne ikke gemmes her' + (code ? ` (${code})` : '') + '.'; st.className = 'status err'; console.error(e); }
+  } finally { $('ics').disabled = example; }
+}
+
+function localToday() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function setFromDefault() {
+  const y = +$('year').value, t = localToday();
+  $('from').value = String(y) === t.slice(0, 4) ? t : `${y}-01-01`;
+}
 // ---------- wiring ----------
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
@@ -558,12 +662,14 @@ const drop = $('drop');
 drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) readPdf(f); });
 $('file').addEventListener('change', e => { const f = e.target.files[0]; if (f) readPdf(f); e.target.value = ''; });
 $('fileBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
-for (const id of ['year', 'ferie', 'overf']) $(id).addEventListener('input', () => { if (current) render(); });
+for (const id of ['year', 'ferie', 'overf']) $(id).addEventListener('input', () => { if (id === 'year') setFromDefault(); if (current) render(); });
+$('fromToday').addEventListener('click', () => { const y = +$('year').value, t = localToday(); $('from').value = t.slice(0, 4) === String(y) ? t : `${y}-01-01`; });
 $('dl').addEventListener('click', saveFile);
+$('ics').addEventListener('click', saveIcs);
 for (const id of ['ferie', 'overf']) { const v = store.get('vagtplan.' + id); if (v !== null) $(id).value = v; $(id).addEventListener('change', () => store.set('vagtplan.' + id, $(id).value)); }
 
 const startYear = new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0);
-$('year').value = startYear;
+$('year').value = startYear; setFromDefault();
 current = exampleData(startYear);
 renderNames(); render();
 window.__readPdf = readPdf; window.__choose = choose;

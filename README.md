@@ -7,6 +7,7 @@ Træk vagtplanen ind som PDF, vælg dit navn, og hent dit timeark med alle vagte
 - PDF'en læses kun i din egen browser og sendes ingen steder hen.
 - Timearket (.xlsx) virker i både Excel og Google Sheets og regner normtid og saldo.
 - Normen er 35 timer om ugen i gennemsnit (skifteholdsplan med dag, aften og nat, Industriens Overenskomst § 15 stk. 4.1): 7 timer pr. hverdag, minus søgnehelligdage på hverdage og ferie.
+- Siden kan også lave en kalenderfil (.ics) med dine vagter, som kan importeres i Google Kalender. Man vælger selv, fra hvilken dato vagterne skal med, så allerede afviklede vagter ikke bliver rørt, når planen senere ændres.
 - Siden kan også bruges uden internet: hent `index.html` og åbn den i en browser.
 
 **Upload aldrig vagtplaner eller udfyldte timeark her** (heller ikke i Issues). De indeholder kollegers navne og arbejdstider.
